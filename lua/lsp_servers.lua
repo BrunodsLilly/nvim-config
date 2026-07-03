@@ -54,7 +54,8 @@ function M.setup()
                 analysis = {
                     autoSearchPaths = true,
                     useLibraryCodeForTypes = true,
-                    diagnosticMode = 'openFilesOnly',
+                    diagnosticMode = 'workspace',
+                autoImportCompletions = true,
                 },
             },
         },
@@ -100,13 +101,25 @@ function M.setup()
         },
     })
 
+    vim.lsp.config('sourcekit', {
+        cmd = { 'sourcekit-lsp' },
+        filetypes = { 'swift', 'objective-c', 'objective-cpp' },
+        root_markers = { 'Package.swift', '.git' },
+    })
+
+    vim.lsp.config('kotlin_language_server', {
+        cmd = { 'kotlin-language-server' },
+        filetypes = { 'kotlin' },
+        root_markers = { 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', '.git' },
+    })
+
     vim.lsp.config('emmet_language_server', {
         cmd = { 'emmet-language-server', '--stdio' },
         filetypes = { 'html', 'css', 'scss', 'less', 'javascriptreact', 'typescriptreact' },
         root_markers = { '.git' },
     })
 
-    vim.lsp.enable({ 'vtsls', 'lua_ls', 'pyright', 'ruff', 'gopls', 'html', 'cssls', 'emmet_language_server' })
+    vim.lsp.enable({ 'vtsls', 'lua_ls', 'pyright', 'ruff', 'gopls', 'html', 'cssls', 'emmet_language_server', 'sourcekit', 'kotlin_language_server' })
 end
 
 return M

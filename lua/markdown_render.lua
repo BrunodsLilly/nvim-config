@@ -69,6 +69,7 @@ function M.setup()
         win_options = {
             conceallevel = { default = vim.o.conceallevel, rendered = 3 },
             concealcursor = { default = vim.o.concealcursor, rendered = "" },
+            wrap = { default = true, rendered = true },
         },
     })
 

@@ -9,13 +9,133 @@ vim.opt.tabstop = 4
 vim.opt.softtabstop = 4
 vim.opt.shiftwidth = 4
 vim.opt.swapfile = false
-vim.opt.completeopt = { "menu", "menuone", "noselect", "popup" }
+vim.opt.completeopt = { "menu", "menuone", "noinsert", "popup" }
 vim.opt.autocomplete = true
+
+vim.opt.cursorline = true
+vim.opt.scrolloff = 8
+vim.opt.signcolumn = "yes"
+vim.opt.colorcolumn = "80"
+vim.opt.list = true
+vim.opt.listchars = { tab = "  ", trail = "·", nbsp = "␣" }
+
+vim.diagnostic.config({
+    virtual_text = { prefix = "●" },
+    signs = true,
+    underline = true,
+    severity_sort = true,
+})
+
+-- Quickfix navigation
+vim.keymap.set("n", "<M-j>", "<cmd>cnext<CR>",  { desc = "Next quickfix item",  silent = true })
+vim.keymap.set("n", "<M-k>", "<cmd>cprev<CR>",  { desc = "Prev quickfix item",  silent = true })
+vim.keymap.set("n", "<M-c>", "<cmd>cclose<CR>", { desc = "Close quickfix",       silent = true })
+
+-- Collect diagnostics from all CWD buffers into native quickfix
+local function cwd_diagnostics_to_qf()
+    local cwd = vim.fn.getcwd()
+    if cwd:sub(-1) ~= "/" then cwd = cwd .. "/" end
+    local items = {}
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        local name = vim.api.nvim_buf_get_name(bufnr)
+        if name ~= "" and name:sub(1, #cwd) == cwd then
+            vim.list_extend(items, vim.diagnostic.toqflist(vim.diagnostic.get(bufnr)))
+        end
+    end
+    vim.fn.setqflist({}, " ", { title = "Diagnostics (cwd)", items = items })
+    if #items > 0 then vim.cmd("copen") end
+end
+vim.keymap.set("n", "<leader>xq", cwd_diagnostics_to_qf, { desc = "CWD diagnostics → quickfix", silent = true })
+
+-- Run pyright CLI over the whole project and load every error into quickfix.
+-- Catches errors in files not yet open in any buffer.
+local function pyright_to_qf()
+    local items = {}
+    local stdout_lines = {}
+    vim.notify('pyright: checking…', vim.log.levels.INFO)
+    vim.fn.jobstart({ 'pyright' }, {
+        cwd = vim.fn.getcwd(),
+        stdout_buffered = true,
+        on_stdout = function(_, data)
+            vim.list_extend(stdout_lines, data)
+        end,
+        on_exit = function()
+            for _, line in ipairs(stdout_lines) do
+                -- pyright output:  /abs/path/file.py:10:5 - error: message (code)
+                local file, lnum, col, sev, msg =
+                    line:match('^%s*(.+):(%d+):(%d+) %- (%a+): (.+)$')
+                if file then
+                    table.insert(items, {
+                        filename = file,
+                        lnum     = tonumber(lnum),
+                        col      = tonumber(col),
+                        type     = sev:sub(1, 1):upper(),  -- E or W
+                        text     = msg,
+                    })
+                end
+            end
+            vim.fn.setqflist({}, ' ', { title = 'pyright', items = items })
+            if #items > 0 then
+                vim.cmd('copen')
+            else
+                vim.notify('pyright: no errors ✓', vim.log.levels.INFO)
+            end
+        end,
+    })
+end
+vim.keymap.set("n", "<leader>xp", pyright_to_qf, { desc = "pyright whole-project → quickfix", silent = true })
+
+-- Replace ~ with space so EndOfBuffer shading shows as solid block (like desert)
+vim.opt.fillchars = { eob = " " }
 
 require('vim._core.ui2').enable()
 
 vim.keymap.set("n", "<leader>ev", ":vsplit $MYVIMRC<CR>", { desc = "Edit init.lua", silent = true })
 vim.keymap.set("n", "<leader>sv", ":source $MYVIMRC | echo 'Configuration reloaded'<CR>", { desc = "Source init.lua", silent = true })
+
+-- Float windows: rounded border + distinct background
+vim.o.winborder = 'rounded'
+vim.api.nvim_set_hl(0, 'NormalFloat', { link = 'Pmenu' })
+vim.api.nvim_set_hl(0, 'FloatBorder', { link = 'PmenuSel' })
+
+-- EndOfBuffer shading: darken Normal bg ~15% so area below last line is visibly tinted
+local bit = require('bit')
+local function shade_eob()
+    local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+    local bg = normal.bg
+    if bg then
+        local r = math.floor(bit.band(bit.rshift(bg, 16), 0xff) * 0.85)
+        local g = math.floor(bit.band(bit.rshift(bg,  8), 0xff) * 0.85)
+        local b = math.floor(bit.band(bg,                 0xff) * 0.85)
+        local shaded = bit.bor(bit.lshift(r, 16), bit.lshift(g, 8), b)
+        vim.api.nvim_set_hl(0, "EndOfBuffer", { bg = shaded, fg = shaded })
+    end
+end
+vim.api.nvim_create_autocmd("ColorScheme", { callback = shade_eob })
+
+-- Colorscheme picker: <leader>cs
+local schemes = {
+    "catppuccin-mocha", "catppuccin-frappe", "catppuccin-macchiato",
+    "kanagawa-wave", "kanagawa-dragon",
+    "rose-pine", "rose-pine-moon", "rose-pine-dawn",
+    "tokyonight", "tokyonight-night", "tokyonight-storm",
+    "gruvbox-material",
+    "desert",
+}
+vim.keymap.set("n", "<leader>cs", function()
+    vim.ui.select(schemes, { prompt = "Colorscheme:" }, function(choice)
+        if choice then vim.cmd.colorscheme(choice) end
+    end)
+end, { desc = "Pick colorscheme", silent = true })
+
+if not pcall(vim.cmd.colorscheme, "catppuccin-mocha") then
+    vim.cmd.colorscheme("desert")
+end
+
+-- nvim-tree requires netrw disabled before plugins load (oil.nvim owns directory
+-- opening anyway, so this doesn't regress anything)
+vim.g.loaded_netrw       = 1
+vim.g.loaded_netrwPlugin = 1
 
 require('lsp_servers').setup()
 require('lsp_keymaps').setup()
