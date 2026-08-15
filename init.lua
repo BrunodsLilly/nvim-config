@@ -143,3 +143,80 @@ require('plugins').setup()
 require('zettelkasten').setup()
 require('markdown_render').setup()
 require('snippets').setup()
+require('pi_nvim').setup()
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Quality-of-life settings
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Smarter search: case-insensitive unless you type a capital
+vim.opt.ignorecase = true
+vim.opt.smartcase = true
+vim.opt.incsearch = true
+
+-- Faster updates (default 4000ms is sluggish for gitsigns, illuminate, etc.)
+vim.opt.updatetime = 250
+vim.opt.timeoutlen = 400
+
+-- Split behavior: open splits to the right and below (more natural)
+vim.opt.splitright = true
+vim.opt.splitbelow = true
+
+-- Clipboard: use system clipboard so yank/paste works with macOS
+vim.opt.clipboard = "unnamedplus"
+
+-- Mouse: enable for all modes (resize splits, scroll, select)
+vim.opt.mouse = "a"
+
+-- Line wrapping: soft-wrap long lines, don't break mid-word
+vim.opt.wrap = true
+vim.opt.linebreak = true
+vim.opt.breakindent = true
+
+-- Persistent marks and better session recovery
+vim.opt.shada = "!,'100,<50,s10,h"
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Keymaps: window/split navigation
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Move between splits with Ctrl+hjkl (no <C-w> prefix needed)
+vim.keymap.set("n", "<C-h>", "<C-w>h", { desc = "Move to left split", silent = true })
+vim.keymap.set("n", "<C-j>", "<C-w>j", { desc = "Move to below split", silent = true })
+vim.keymap.set("n", "<C-k>", "<C-w>k", { desc = "Move to above split", silent = true })
+vim.keymap.set("n", "<C-l>", "<C-w>l", { desc = "Move to right split", silent = true })
+
+-- Resize splits with Ctrl+arrows
+vim.keymap.set("n", "<C-Up>", "<cmd>resize +2<cr>", { desc = "Increase height", silent = true })
+vim.keymap.set("n", "<C-Down>", "<cmd>resize -2<cr>", { desc = "Decrease height", silent = true })
+vim.keymap.set("n", "<C-Left>", "<cmd>vertical resize -2<cr>", { desc = "Decrease width", silent = true })
+vim.keymap.set("n", "<C-Right>", "<cmd>vertical resize +2<cr>", { desc = "Increase width", silent = true })
+
+-- Move lines up/down in visual mode (like VS Code Alt+Up/Down)
+vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv", { desc = "Move selection down", silent = true })
+vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv", { desc = "Move selection up", silent = true })
+
+-- Keep cursor centered when scrolling/searching
+vim.keymap.set("n", "<C-d>", "<C-d>zz", { desc = "Scroll down (centered)" })
+vim.keymap.set("n", "<C-u>", "<C-u>zz", { desc = "Scroll up (centered)" })
+vim.keymap.set("n", "n", "nzzzv", { desc = "Next search (centered)" })
+vim.keymap.set("n", "N", "Nzzzv", { desc = "Prev search (centered)" })
+
+-- Escape clears search highlighting
+vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear search highlight", silent = true })
+
+-- Quick save
+vim.keymap.set("n", "<leader>w", "<cmd>w<cr>", { desc = "Save file", silent = true })
+
+-- Select all
+vim.keymap.set("n", "<leader>a", "ggVG", { desc = "Select all", silent = true })
+
+-- Better indenting in visual mode (stay in visual after indent)
+vim.keymap.set("v", "<", "<gv", { desc = "Indent left" })
+vim.keymap.set("v", ">", ">gv", { desc = "Indent right" })
+
+-- Don't overwrite register when pasting over selection
+vim.keymap.set("x", "<leader>p", '"_dP', { desc = "Paste without overwrite" })
+
+-- Quick terminal escape
+vim.keymap.set("t", "<Esc><Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })

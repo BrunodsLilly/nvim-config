@@ -57,6 +57,33 @@ function M.setup()
         'https://github.com/nvim-pack/nvim-spectre',
         -- File tree with LSP diagnostic markers
         'https://github.com/nvim-tree/nvim-tree.lua',
+        -- ─── NEW PLUGINS ────────────────────────────────────────────────
+        -- Notifications: non-blocking floating messages replace vim.notify
+        'https://github.com/rcarriga/nvim-notify',
+        -- Statusline: fast, configurable, shows LSP/git/mode
+        'https://github.com/nvim-lualine/lualine.nvim',
+        -- Buffer tabs at top
+        'https://github.com/akinsho/bufferline.nvim',
+        -- Comment toggling (gcc / gc in visual)
+        'https://github.com/numToStr/Comment.nvim',
+        -- Undo tree visualizer (travel through undo history)
+        'https://github.com/mbbill/undotree',
+        -- Better text objects (function args, etc.)
+        'https://github.com/echasnovski/mini.ai',
+        -- Align text (gaip= to align on =)
+        'https://github.com/echasnovski/mini.align',
+        -- Highlight word under cursor everywhere
+        'https://github.com/RRethy/vim-illuminate',
+        -- Smooth scrolling
+        'https://github.com/karb94/neoscroll.nvim',
+        -- Better quickfix window
+        'https://github.com/kevinhwang91/nvim-bqf',
+        -- Telescope file browser (replace netrw inside telescope)
+        'https://github.com/nvim-telescope/telescope-file-browser.nvim',
+        -- Git blame in virtual text (full commit, not just gitsigns)
+        'https://github.com/f-person/git-blame.nvim',
+        -- Yank ring / clipboard history
+        'https://github.com/gbprod/yanky.nvim',
     })
 
     -- Zen Mode
@@ -366,6 +393,139 @@ function M.setup()
         update_focused_file = { enable = true },  -- reveal current file automatically
     })
     vim.keymap.set("n", "<leader>n", "<cmd>NvimTreeFindFileToggle<cr>", { desc = "Toggle file tree (reveal current file)", silent = true })
+
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- NEW PLUGINS SETUP
+    -- ═══════════════════════════════════════════════════════════════════════════
+
+    -- nvim-notify: beautiful floating notifications
+    local notify = require("notify")
+    notify.setup({
+        background_colour = "#000000",
+        fps = 60,
+        render = "compact",
+        stages = "fade_in_slide_out",
+        timeout = 3000,
+        top_down = true,
+    })
+    vim.notify = notify
+
+    -- lualine: statusline
+    require("lualine").setup({
+        options = {
+            theme = "auto",
+            component_separators = { left = "│", right = "│" },
+            section_separators = { left = "", right = "" },
+            globalstatus = true,
+        },
+        sections = {
+            lualine_a = { "mode" },
+            lualine_b = { "branch", "diff", "diagnostics" },
+            lualine_c = { { "filename", path = 1 } },
+            lualine_x = { "encoding", "fileformat", "filetype" },
+            lualine_y = { "progress" },
+            lualine_z = { "location" },
+        },
+    })
+
+    -- bufferline: buffer tabs at top
+    require("bufferline").setup({
+        options = {
+            mode = "buffers",
+            diagnostics = "nvim_lsp",
+            diagnostics_indicator = function(count, level)
+                local icon = level:match("error") and "Ε" or "ω"
+                return " " .. icon .. " " .. count
+            end,
+            show_buffer_close_icons = false,
+            show_close_icon = false,
+            separator_style = "thin",
+            offsets = {
+                { filetype = "NvimTree", text = "Explorer", text_align = "center" },
+            },
+        },
+    })
+    -- Navigate buffers with <S-h> and <S-l>
+    vim.keymap.set("n", "<S-h>", "<cmd>BufferLineCyclePrev<cr>", { desc = "Prev buffer", silent = true })
+    vim.keymap.set("n", "<S-l>", "<cmd>BufferLineCycleNext<cr>", { desc = "Next buffer", silent = true })
+    vim.keymap.set("n", "<leader>bp", "<cmd>BufferLineTogglePin<cr>", { desc = "Pin buffer", silent = true })
+    vim.keymap.set("n", "<leader>bD", "<cmd>BufferLineCloseOthers<cr>", { desc = "Close other buffers", silent = true })
+    vim.keymap.set("n", "<leader>bd", "<cmd>bdelete<cr>", { desc = "Close buffer", silent = true })
+
+    -- Comment.nvim: gcc to toggle line comment, gc in visual
+    require("Comment").setup()
+
+    -- undotree: visualize undo history
+    vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<cr>", { desc = "Toggle Undotree", silent = true })
+    -- Persist undo across sessions
+    vim.opt.undofile = true
+    vim.opt.undodir = vim.fn.stdpath("state") .. "/undo"
+
+    -- mini.ai: better text objects (function args, brackets, quotes, etc.)
+    require("mini.ai").setup({
+        custom_textobjects = {
+            -- f = function args (treesitter), already built-in
+            -- a = argument, built-in
+        },
+        n_lines = 100,
+    })
+
+    -- mini.align: align text on characters (ga in visual, then enter char)
+    require("mini.align").setup()
+
+    -- vim-illuminate: highlight word under cursor in all visible occurrences
+    require("illuminate").configure({
+        delay = 200,
+        large_file_cutoff = 2000,
+        providers = { "lsp", "treesitter", "regex" },
+        filetypes_denylist = { "NvimTree", "Trouble", "toggleterm" },
+    })
+    -- Navigate between illuminated references
+    vim.keymap.set("n", "]]", function() require("illuminate").goto_next_reference(false) end, { desc = "Next reference" })
+    vim.keymap.set("n", "[[", function() require("illuminate").goto_prev_reference(false) end, { desc = "Prev reference" })
+
+    -- neoscroll: smooth scrolling for <C-u>, <C-d>, zt, zz, zb
+    require("neoscroll").setup({
+        mappings = { "<C-u>", "<C-d>", "<C-b>", "<C-f>", "zt", "zz", "zb" },
+        hide_cursor = true,
+        easing = "quadratic",
+    })
+
+    -- nvim-bqf: better quickfix with preview and fzf integration
+    require("bqf").setup({
+        auto_enable = true,
+        preview = {
+            auto_preview = true,
+            border = "rounded",
+            show_title = true,
+            winblend = 0,
+        },
+    })
+
+    -- telescope-file-browser
+    pcall(function() require("telescope").load_extension("file_browser") end)
+    vim.keymap.set("n", "<leader>fe", "<cmd>Telescope file_browser path=%:p:h select_buffer=true<cr>", { desc = "File browser (cwd)", silent = true })
+
+    -- git-blame: inline git blame with full commit info
+    require("gitblame").setup({
+        enabled = false,  -- start disabled, toggle with keymap
+        date_format = "%Y-%m-%d",
+        message_template = "  <author> • <date> • <summary>",
+        delay = 500,
+    })
+    vim.keymap.set("n", "<leader>gB", "<cmd>GitBlameToggle<cr>", { desc = "Toggle git blame (full)", silent = true })
+
+    -- yanky.nvim: yank ring + put cycling
+    require("yanky").setup({
+        ring = { history_length = 50, storage = "shada" },
+        highlight = { on_put = true, on_yank = true, timer = 200 },
+    })
+    vim.keymap.set({ "n", "x" }, "p", "<Plug>(YankyPutAfter)")
+    vim.keymap.set({ "n", "x" }, "P", "<Plug>(YankyPutBefore)")
+    vim.keymap.set("n", "<C-p>", "<Plug>(YankyPreviousEntry)", { desc = "Prev yank" })
+    vim.keymap.set("n", "<C-n>", "<Plug>(YankyNextEntry)", { desc = "Next yank" })
+    vim.keymap.set("n", "<leader>fy", "<cmd>Telescope yank_history<cr>", { desc = "Yank history", silent = true })
+    pcall(function() require("telescope").load_extension("yank_history") end)
 end
 
 return M
