@@ -64,8 +64,7 @@ function M.setup()
         'https://github.com/nvim-lualine/lualine.nvim',
         -- Buffer tabs at top
         'https://github.com/akinsho/bufferline.nvim',
-        -- Comment toggling (gcc / gc in visual)
-        'https://github.com/numToStr/Comment.nvim',
+        -- Comment toggling: BUILT-IN on Neovim 0.10+ (gcc / gc / gco / gcO)
         -- Undo tree visualizer (travel through undo history)
         'https://github.com/mbbill/undotree',
         -- Better text objects (function args, etc.)
@@ -452,8 +451,7 @@ function M.setup()
     vim.keymap.set("n", "<leader>bD", "<cmd>BufferLineCloseOthers<cr>", { desc = "Close other buffers", silent = true })
     vim.keymap.set("n", "<leader>bd", "<cmd>bdelete<cr>", { desc = "Close buffer", silent = true })
 
-    -- Comment.nvim: gcc to toggle line comment, gc in visual
-    require("Comment").setup()
+    -- (Comment toggling is built-in on Neovim 0.10+ — gc/gcc/gco/gcO just work)
 
     -- undotree: visualize undo history
     vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<cr>", { desc = "Toggle Undotree", silent = true })
