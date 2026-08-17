@@ -71,6 +71,7 @@ function M.setup()
         'https://github.com/echasnovski/mini.ai',
         -- Align text (gaip= to align on =)
         'https://github.com/echasnovski/mini.align',
+        -- Smooth scrolling: BUILT-IN on Neovim 0.10+ (vim.opt.smoothscroll)
         -- Highlight word under cursor everywhere
         'https://github.com/RRethy/vim-illuminate',
         -- Smooth scrolling
@@ -79,8 +80,7 @@ function M.setup()
         'https://github.com/kevinhwang91/nvim-bqf',
         -- Telescope file browser (replace netrw inside telescope)
         'https://github.com/nvim-telescope/telescope-file-browser.nvim',
-        -- Git blame in virtual text (full commit, not just gitsigns)
-        'https://github.com/f-person/git-blame.nvim',
+        -- Git blame in virtual text: HANDLED by gitsigns current_line_blame
         -- Yank ring / clipboard history
         'https://github.com/gbprod/yanky.nvim',
     })
@@ -482,12 +482,8 @@ function M.setup()
     vim.keymap.set("n", "]]", function() require("illuminate").goto_next_reference(false) end, { desc = "Next reference" })
     vim.keymap.set("n", "[[", function() require("illuminate").goto_prev_reference(false) end, { desc = "Prev reference" })
 
-    -- neoscroll: smooth scrolling for <C-u>, <C-d>, zt, zz, zb
-    require("neoscroll").setup({
-        mappings = { "<C-u>", "<C-d>", "<C-b>", "<C-f>", "zt", "zz", "zb" },
-        hide_cursor = true,
-        easing = "quadratic",
-    })
+    -- neoscroll: REMOVED — using native vim.opt.smoothscroll instead
+    vim.opt.smoothscroll = true
 
     -- nvim-bqf: better quickfix with preview and fzf integration
     require("bqf").setup({
@@ -504,14 +500,7 @@ function M.setup()
     pcall(function() require("telescope").load_extension("file_browser") end)
     vim.keymap.set("n", "<leader>fe", "<cmd>Telescope file_browser path=%:p:h select_buffer=true<cr>", { desc = "File browser (cwd)", silent = true })
 
-    -- git-blame: inline git blame with full commit info
-    require("gitblame").setup({
-        enabled = false,  -- start disabled, toggle with keymap
-        date_format = "%Y-%m-%d",
-        message_template = "  <author> • <date> • <summary>",
-        delay = 500,
-    })
-    vim.keymap.set("n", "<leader>gB", "<cmd>GitBlameToggle<cr>", { desc = "Toggle git blame (full)", silent = true })
+    -- git-blame: REMOVED — gitsigns current_line_blame already covers this
 
     -- yanky.nvim: yank ring + put cycling
     require("yanky").setup({

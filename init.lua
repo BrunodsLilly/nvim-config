@@ -196,9 +196,7 @@ vim.keymap.set("n", "<C-Right>", "<cmd>vertical resize +2<cr>", { desc = "Increa
 vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv", { desc = "Move selection down", silent = true })
 vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv", { desc = "Move selection up", silent = true })
 
--- Keep cursor centered when scrolling/searching
-vim.keymap.set("n", "<C-d>", "<C-d>zz", { desc = "Scroll down (centered)" })
-vim.keymap.set("n", "<C-u>", "<C-u>zz", { desc = "Scroll up (centered)" })
+-- Keep cursor centered when searching
 vim.keymap.set("n", "n", "nzzzv", { desc = "Next search (centered)" })
 vim.keymap.set("n", "N", "Nzzzv", { desc = "Prev search (centered)" })
 
