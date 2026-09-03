@@ -116,6 +116,91 @@ function M.owner()
     return (type(owner) == "string" and owner ~= "") and owner or nil
 end
 
+-- ===========================================================================
+-- ASK CHANNEL: push a question (with a selection) back to the paired pi
+--
+-- pi publishes its own RPC channel id as g:pi_chan when /nvim-mode on runs, and
+-- we notify that channel directly. Targeted, not broadcast: nvim_subscribe was
+-- removed in 0.12, so rpcnotify(0, ...) reaches nobody, and targeting the exact
+-- channel also means only the pi paired with THIS Neovim ever hears it.
+-- ===========================================================================
+
+local function pi_channel()
+    local chan = vim.g.pi_chan
+    if type(chan) ~= "number" or chan <= 0 then
+        return nil, "No pi is listening (g:pi_chan unset). Run /nvim-mode on in the pi pane."
+    end
+    return chan, nil
+end
+
+--- Sends a question plus a line range to pi.
+---
+--- Both the range and the selected text go over the wire: the range is
+--- authoritative (pi can re-read the file), the text records what was actually
+--- on screen when the question was asked.
+---
+--- @param opts table line1, line2 (1-indexed inclusive), optional question
+function M.ask(opts)
+    opts = opts or {}
+    local chan, err = pi_channel()
+    if not chan then
+        vim.notify(err, vim.log.levels.WARN, { title = "pi" })
+        return
+    end
+
+    local bufnr = vim.api.nvim_get_current_buf()
+    local first = math.max(1, opts.line1 or vim.fn.line("."))
+    local last = math.max(first, opts.line2 or first)
+    local lines = vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false)
+    local path = current_buf_path(bufnr)
+
+    local function deliver(question)
+        -- vim.ui.input yields nil when cancelled with <Esc>; an empty string when
+        -- submitted blank. Neither should wake the agent.
+        if type(question) ~= "string" or vim.trim(question) == "" then
+            vim.notify("pi: cancelled", vim.log.levels.INFO, { title = "pi" })
+            return
+        end
+
+        local ok, notify_err = pcall(vim.rpcnotify, chan, "pi_ask", {
+            question = question,
+            path = path,
+            start_line = first,
+            end_line = last,
+            lines = lines,
+            filetype = vim.bo[bufnr].filetype,
+        })
+
+        if not ok then
+            -- The channel id was stale: pi exited without clearing g:pi_chan.
+            -- Clear it ourselves so the next :PiAsk gives the useful message
+            -- instead of failing the same way again.
+            vim.g.pi_chan = nil
+            vim.notify(
+                "pi: channel " .. chan .. " is gone (" .. tostring(notify_err) .. ").\n"
+                    .. "Re-run /nvim-mode on in the pi pane.",
+                vim.log.levels.ERROR,
+                { title = "pi" }
+            )
+            return
+        end
+
+        local where = (path or "buffer") .. ":" .. first .. (last > first and ("-" .. last) or "")
+        vim.notify(
+            "Sent to pi → " .. where .. " (" .. #lines .. " line" .. (#lines == 1 and "" or "s") .. ")",
+            vim.log.levels.INFO,
+            { title = "pi" }
+        )
+    end
+
+    if type(opts.question) == "string" and vim.trim(opts.question) ~= "" then
+        deliver(opts.question)
+    else
+        local span = first == last and ("line " .. first) or ("lines " .. first .. "-" .. last)
+        vim.ui.input({ prompt = "Ask pi about " .. span .. ": " }, deliver)
+    end
+end
+
 function M.visual_selection()
     local bufnr = vim.api.nvim_get_current_buf()
     local range = visual_range(bufnr)
@@ -288,6 +373,25 @@ function M.clear_marks(bufnr)
 end
 
 function M.setup()
+    -- :PiAsk works with or without a range. From visual mode the `:` prefix
+    -- supplies '<,'> automatically, so the visual keymap below needs no extra
+    -- work. With no range at all, line1 == line2 == the cursor line.
+    vim.api.nvim_create_user_command("PiAsk", function(a)
+        M.ask({ line1 = a.line1, line2 = a.line2, question = a.args })
+    end, {
+        range = true,
+        nargs = "*",
+        desc = "Ask the paired pi about this range (prompts if no question given)",
+    })
+
+    -- Visual mode only, and deliberately NOT under <leader>p: <leader>p is
+    -- already "paste without overwrite" in visual mode, so any <leader>p* here
+    -- would make every paste wait to see if another key is coming.
+    vim.keymap.set("x", "<leader>a", ":PiAsk<CR>", {
+        silent = true,
+        desc = "Ask pi about the selection",
+    })
+
     vim.api.nvim_create_user_command("PiNvimServer", function()
         local server = vim.v.servername
         if type(server) ~= "string" or server == "" then
@@ -299,9 +403,10 @@ function M.setup()
             return
         end
         vim.notify(
-            ("servername: %s\nowner: %s\nPoint pi at it with NVIM=%s"):format(
+            ("servername: %s\nowner: %s\npi channel: %s\nPoint pi at it with NVIM=%s"):format(
                 server,
                 M.owner() or "(none -- hand-started)",
+                vim.g.pi_chan or "(none -- /nvim-mode on not run)",
                 server
             ),
             vim.log.levels.INFO
