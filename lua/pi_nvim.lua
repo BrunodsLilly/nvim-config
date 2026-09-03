@@ -1,22 +1,25 @@
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("pi_nvim")
-local runtime_dir = vim.fn.expand("~/.pi/agent/runtime")
-local socket_file = runtime_dir .. "/nvim-server.txt"
 
-local function ensure_runtime_dir()
-    vim.fn.mkdir(runtime_dir, "p")
-end
-
-local function write_socket_file()
-    local server = vim.v.servername
-    if type(server) ~= "string" or server == "" then
-        return nil
-    end
-    ensure_runtime_dir()
-    vim.fn.writefile({ server }, socket_file)
-    return server
-end
+-- Deliberately NO global socket-pointer file.
+--
+-- This module used to publish vim.v.servername to
+-- ~/.pi/agent/runtime/nvim-server.txt on VimEnter and BufEnter so that any pi
+-- process could find "the" Neovim. With more than one Neovim -- or more than one
+-- agent -- that file is last-buffer-touched-wins: a private `nvim --listen`
+-- session spawned for one agent still advertised its own socket globally, and a
+-- second agent with no $NVIM would silently attach to it. Observed live, not
+-- hypothetical: the pointer flipped mid-session to another agent's private
+-- socket, leaving that agent one `/nvim-mode on` away from driving someone
+-- else's editor.
+--
+-- So the pointer is gone, and pi resolves exactly one candidate ($NVIM) with no
+-- fallback. A Neovim started by hand is therefore NOT discoverable by an
+-- unrelated pi process, by design. The two supported ways to pair them:
+--   * run pi from a :terminal inside Neovim ($NVIM is set by Neovim itself), or
+--   * /nvim-window, which spawns the pair on a private socket and stamps
+--     g:pi_owner so each side can prove it reached its own partner.
 
 local function current_buf_path(bufnr)
     local name = vim.api.nvim_buf_get_name(bufnr)
@@ -101,12 +104,16 @@ local function context_lines(bufnr, center_line, radius)
     }
 end
 
-function M.socket_file()
-    return socket_file
+function M.servername()
+    return vim.v.servername
 end
 
-function M.servername()
-    return write_socket_file() or vim.v.servername
+--- The ownership token stamped by /nvim-window via --cmd "let g:pi_owner=...".
+--- nil for a hand-started Neovim, which is fine: in that case $NVIM can only
+--- have been set by this very Neovim for its own child processes.
+function M.owner()
+    local owner = vim.g.pi_owner
+    return (type(owner) == "string" and owner ~= "") and owner or nil
 end
 
 function M.visual_selection()
@@ -142,7 +149,7 @@ function M.current_context(opts)
     end
 
     return {
-        server = write_socket_file() or vim.v.servername,
+        server = vim.v.servername,
         cwd = vim.fn.getcwd(),
         mode = vim.fn.mode(),
         win = win,
@@ -281,18 +288,25 @@ function M.clear_marks(bufnr)
 end
 
 function M.setup()
-    write_socket_file()
-
-    vim.api.nvim_create_autocmd({ "VimEnter", "BufEnter" }, {
-        callback = function()
-            write_socket_file()
-        end,
-    })
-
     vim.api.nvim_create_user_command("PiNvimServer", function()
-        local server = write_socket_file() or ""
-        vim.notify(server ~= "" and server or "No active servername", vim.log.levels.INFO)
-    end, { desc = "Show the socket path Pi should attach to" })
+        local server = vim.v.servername
+        if type(server) ~= "string" or server == "" then
+            vim.notify(
+                "No servername: this Neovim has no RPC socket, so pi cannot attach.\n"
+                    .. "Start it with `nvim --listen <path>` (or use /nvim-window).",
+                vim.log.levels.WARN
+            )
+            return
+        end
+        vim.notify(
+            ("servername: %s\nowner: %s\nPoint pi at it with NVIM=%s"):format(
+                server,
+                M.owner() or "(none -- hand-started)",
+                server
+            ),
+            vim.log.levels.INFO
+        )
+    end, { desc = "Show the socket path and owner token Pi should attach to" })
 
     vim.api.nvim_create_user_command("PiNvimContext", function()
         local ctx = M.current_context()
