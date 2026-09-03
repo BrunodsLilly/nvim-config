@@ -15,6 +15,7 @@ function M.setup()
         'https://github.com/nvim-lua/plenary.nvim',
         'https://github.com/nvim-telescope/telescope.nvim',
         'https://github.com/stevearc/oil.nvim',
+        'https://github.com/stevearc/aerial.nvim',
         'https://github.com/stevearc/conform.nvim',
         'https://github.com/windwp/nvim-autopairs',
         'https://github.com/windwp/nvim-ts-autotag',
@@ -83,6 +84,8 @@ function M.setup()
         -- Git blame in virtual text: HANDLED by gitsigns current_line_blame
         -- Yank ring / clipboard history
         'https://github.com/gbprod/yanky.nvim',
+        -- AI pair programmer: inline ghost-text suggestions
+        'https://github.com/github/copilot.vim',
     })
 
     -- Zen Mode
@@ -308,19 +311,91 @@ function M.setup()
         },
     })
 
-    -- Save current buffer as new diff reference ("I ack this state")
-    vim.keymap.set("n", "<leader>ar", function()
-        local buf = vim.api.nvim_get_current_buf()
+    -- Set the diff reference to the buffer's CURRENT contents ("I ack this
+    -- state"), so from then on the signs/overlay show only what changed since
+    -- the ack. That is the useful frame for reviewing a single agent turn, as
+    -- opposed to the git source, which shows everything since the index.
+    --
+    -- Three load-bearing details, none of them obvious:
+    --   1. There is NO MiniDiff.set_source(). It has never existed in this
+    --      plugin (checked against its full git history). A source is *config*:
+    --      either in setup() or per-buffer via vim.b.minidiff_config.
+    --   2. enable() attaches the configured source, defaulting to
+    --      gen_source.git. Outside a repo that fails, so the buffer never
+    --      becomes enabled; inside one it would immediately overwrite the
+    --      snapshot we are about to set. Hence source = none() first.
+    --   3. set_ref_text() refuses a buffer that is not enabled, so it must come
+    --      last. Getting this order wrong fails as "no changes shown", which
+    --      reads like a clean diff rather than a broken one.
+    local function ack_state(buf)
+        buf = (buf == nil or buf == 0) and vim.api.nvim_get_current_buf() or buf
         local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-        -- Set a "manual" source: diff against saved snapshot
-        md.set_source(buf, md.gen_source.none())
-        vim.b[buf]._mini_diff_ref = lines
-        vim.notify("mini.diff: reference set", vim.log.levels.INFO)
-    end, { desc = "Set diff reference (ack current state)" })
+
+        vim.b[buf].minidiff_config = { source = md.gen_source.none() }
+
+        -- Buffer-local config is read at enable time, so re-attach if this
+        -- buffer is already tracked (normally by the git source).
+        if md.get_buf_data(buf) ~= nil then pcall(md.disable, buf) end
+
+        local ok_enable, enable_err = pcall(md.enable, buf)
+        if not ok_enable then
+            vim.notify("mini.diff: could not enable buffer — " .. tostring(enable_err), vim.log.levels.ERROR)
+            return
+        end
+
+        local ok_ref, ref_err = pcall(md.set_ref_text, buf, lines)
+        if not ok_ref then
+            vim.notify("mini.diff: could not set reference — " .. tostring(ref_err), vim.log.levels.ERROR)
+            return
+        end
+
+        vim.notify(
+            ("mini.diff: reference set to current state (%d lines) — changes from here are yours to review")
+                :format(#lines),
+            vim.log.levels.INFO
+        )
+    end
+
+    -- Hand the buffer back to the git source. Needed because ack_state() takes a
+    -- buffer off git tracking for the rest of its life; without this there is no
+    -- way back short of reloading it.
+    local function track_git(buf)
+        buf = (buf == nil or buf == 0) and vim.api.nvim_get_current_buf() or buf
+        vim.b[buf].minidiff_config = nil
+        if md.get_buf_data(buf) ~= nil then pcall(md.disable, buf) end
+        local ok, err = pcall(md.enable, buf)
+        vim.notify(
+            ok and "mini.diff: tracking git again (diff vs index)"
+                or ("mini.diff: could not attach git source — " .. tostring(err)),
+            ok and vim.log.levels.INFO or vim.log.levels.WARN
+        )
+    end
+
+    -- Save current buffer as new diff reference ("I ack this state")
+    vim.keymap.set("n", "<leader>ar", function() ack_state(0) end, {
+        desc = "Set diff reference (ack current state)",
+    })
+
+    -- Back to diffing against the git index
+    vim.keymap.set("n", "<leader>aR", function() track_git(0) end, {
+        desc = "Diff against git index again",
+    })
 
     -- Toggle diff overlay on/off
     vim.keymap.set("n", "<leader>ad", function()
-        md.toggle_overlay(0)
+        local buf = vim.api.nvim_get_current_buf()
+        -- toggle_overlay throws on a buffer mini.diff never attached to (e.g. a
+        -- file outside any repo, where the default git source fails). Say so
+        -- instead of surfacing a raw Lua error.
+        if md.get_buf_data(buf) == nil then
+            vim.notify(
+                "mini.diff is not tracking this buffer (outside a repo?). "
+                    .. "Use <leader>ar to diff against its current state.",
+                vim.log.levels.WARN
+            )
+            return
+        end
+        md.toggle_overlay(buf)
     end, { desc = "Toggle diff overlay" })
 
     -- Apply hunk under cursor (accept agent change)
@@ -502,6 +577,25 @@ function M.setup()
 
     -- git-blame: REMOVED — gitsigns current_line_blame already covers this
 
+    -- aerial.nvim: LSP document outline sidebar
+    require("aerial").setup({
+        backends = { "lsp", "treesitter" },
+        layout = {
+            max_width = { 40, 0.2 },
+            min_width = 25,
+            default_direction = "prefer_right",
+        },
+        show_guides = true,
+        filter_kind = false,  -- show all symbol kinds
+        on_attach = function(bufnr)
+            vim.keymap.set("n", "{", "<cmd>AerialPrev<CR>", { buffer = bufnr, desc = "Prev symbol" })
+            vim.keymap.set("n", "}", "<cmd>AerialNext<CR>", { buffer = bufnr, desc = "Next symbol" })
+        end,
+    })
+    vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle!<CR>", { desc = "Toggle outline (Aerial)", silent = true })
+    vim.keymap.set("n", "<leader>fA", "<cmd>Telescope aerial<cr>", { desc = "Find symbols (Aerial)", silent = true })
+    pcall(function() require("telescope").load_extension("aerial") end)
+
     -- yanky.nvim: yank ring + put cycling
     require("yanky").setup({
         ring = { history_length = 50, storage = "shada" },
@@ -513,6 +607,43 @@ function M.setup()
     vim.keymap.set("n", "<C-n>", "<Plug>(YankyNextEntry)", { desc = "Next yank" })
     vim.keymap.set("n", "<leader>fy", "<cmd>Telescope yank_history<cr>", { desc = "Yank history", silent = true })
     pcall(function() require("telescope").load_extension("yank_history") end)
+
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- GitHub Copilot: AI inline suggestions
+    -- ═══════════════════════════════════════════════════════════════════════════
+
+    -- Use the embedded language server (no npx / Artifactory needed)
+    vim.g.copilot_version = false
+
+    -- Disable in personal-notes filetypes where ghost text is noise
+    vim.g.copilot_filetypes = {
+        ['vimwiki'] = false,
+        ['markdown'] = true,   -- keep for code-heavy markdown
+        ['TelescopePrompt'] = false,
+        ['toggleterm'] = false,
+        ['help'] = false,
+        ['gitcommit'] = true,
+    }
+
+    -- Workspace folders for better context (Copilot sends these to the LS)
+    vim.g.copilot_workspace_folders = { vim.fn.getcwd() }
+
+    -- ── Keymaps (all insert-mode, no collisions) ──────────────────────────
+    -- Tab          → accept full suggestion (default, fallback = literal tab)
+    -- <C-l>        → accept next WORD (incremental accept)
+    -- <M-]> / <M-[> → cycle next/prev suggestion (defaults, kept)
+    -- <C-]>        → dismiss suggestion (default, kept)
+    -- <M-\>        → force-request suggestion (default, kept)
+    -- <M-Right>    → accept next word (alternate to <C-l>)
+    -- <M-C-Right>  → accept next line
+
+    vim.g.copilot_no_tab_map = false   -- Tab accepts (no conflict with <C-y> completion)
+
+    -- Accept word incrementally — "give me a little more"
+    vim.keymap.set('i', '<C-l>', '<Plug>(copilot-accept-word)', { desc = "Copilot: accept word" })
+
+    -- Accept full line (when you want the whole line but not the rest)
+    vim.keymap.set('i', '<C-S-l>', '<Plug>(copilot-accept-line)', { desc = "Copilot: accept line" })
 end
 
 return M
