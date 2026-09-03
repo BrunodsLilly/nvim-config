@@ -234,6 +234,18 @@ function M.setup()
     vim.keymap.set("n", "<leader>ghs", function() require("gitsigns").stage_hunk() end,   { desc = "Stage hunk" })
     vim.keymap.set("n", "<leader>ghr", function() require("gitsigns").reset_hunk() end,   { desc = "Reset hunk" })
 
+    -- Every changed hunk in the repo, straight into quickfix (bqf gives each one
+    -- a preview). This is the entry point for reviewing a diff: <leader>gq to
+    -- build the list, ]q/[q to walk it, <leader>gQ to hand the whole list to pi.
+    vim.keymap.set("n", "<leader>gq", "<cmd>Gitsigns setqflist all<CR>", {
+        silent = true,
+        desc = "Quickfix: all repo hunks",
+    })
+    vim.keymap.set("n", "<leader>gl", "<cmd>Gitsigns setloclist<CR>", {
+        silent = true,
+        desc = "Loclist: this buffer's hunks",
+    })
+
     -- indent-blankline
     require("ibl").setup({
         indent = { char = "│" },
@@ -255,6 +267,32 @@ function M.setup()
 
     -- toggleterm
     require("toggleterm").setup({ open_mapping = [[<C-\>]], direction = "float" })
+
+    -- lazygit in a float. Installed on this machine but previously unwired, so
+    -- staging/rebasing meant leaving the editor. Reuses one Terminal instance so
+    -- toggling back returns to the same lazygit rather than spawning another.
+    local lazygit = require("toggleterm.terminal").Terminal:new({
+        cmd = "lazygit",
+        direction = "float",
+        hidden = true,
+        float_opts = { border = "rounded" },
+        -- lazygit is a full-screen TUI: start in insert mode, and let <Esc>
+        -- reach lazygit (where it means "back") instead of being swallowed by
+        -- terminal-mode handling.
+        on_open = function(term)
+            vim.cmd("startinsert!")
+            vim.keymap.set("t", "<Esc>", "<Esc>", { buffer = term.bufnr, nowait = true })
+        end,
+        -- gitsigns caches the index, so signs are stale after staging in lazygit
+        -- until something tells it to look again.
+        on_close = function()
+            pcall(function() require("gitsigns").refresh() end)
+        end,
+    })
+    vim.keymap.set("n", "<leader>gg", function() lazygit:toggle() end, {
+        silent = true,
+        desc = "lazygit (float)",
+    })
 
     -- nvim-surround: ys/cs/ds for surrounding pairs and tags
     require("nvim-surround").setup()

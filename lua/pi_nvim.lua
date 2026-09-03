@@ -133,6 +133,67 @@ local function pi_channel()
     return chan, nil
 end
 
+--- Which gitsigns hunks overlap [first, last]?
+---
+--- Returns nil when gitsigns isn't loaded, isn't attached to this buffer (the
+--- normal case outside a repo), or when nothing in range has changed — all of
+--- which simply mean "no diff context to add", not an error.
+local function hunks_in_range(bufnr, first, last)
+    local ok, gs = pcall(require, "gitsigns")
+    if not ok or type(gs.get_hunks) ~= "function" then
+        return nil
+    end
+
+    local hunks = gs.get_hunks(bufnr)
+    if not hunks then
+        return nil
+    end
+
+    local found = {}
+    for _, h in ipairs(hunks) do
+        local added = h.added or {}
+        local hs = added.start or 0
+        -- A pure deletion has count 0 and sits *at* one line rather than
+        -- spanning any, so collapse it to a single-line span instead of letting
+        -- hs..hs-1 make the overlap test always fail.
+        local he = (added.count and added.count > 0) and (hs + added.count - 1) or hs
+        if not (he < first or hs > last) then
+            found[#found + 1] = { head = h.head, type = h.type, lines = h.lines }
+        end
+    end
+
+    return #found > 0 and found or nil
+end
+
+--- "branch@sha" for the repo owning `path`, or nil outside a repo. Only called
+--- when there is diff context worth labelling, since it costs two subprocesses.
+local function git_head(path)
+    if type(path) ~= "string" or path == "" then
+        return nil
+    end
+    local dir = vim.fn.fnamemodify(path, ":h")
+    local branch = vim.fn.systemlist({ "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD" })[1]
+    if vim.v.shell_error ~= 0 or not branch then
+        return nil
+    end
+    local sha = vim.fn.systemlist({ "git", "-C", dir, "rev-parse", "--short", "HEAD" })[1]
+    return sha and (branch .. "@" .. sha) or branch
+end
+
+--- Where the question is being asked from, so pi can frame its answer.
+--- "diffview" and "diff" mean the lines on screen are a *comparison*, not the
+--- current file, which changes what "this code" even refers to.
+local function view_context(bufnr)
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if name:match("^diffview://") then
+        return "diffview"
+    end
+    if vim.wo.diff then
+        return "diff"
+    end
+    return "buffer"
+end
+
 --- Sends a question plus a line range to pi.
 ---
 --- Both the range and the selected text go over the wire: the range is
@@ -162,6 +223,8 @@ function M.ask(opts)
             return
         end
 
+        local hunks = hunks_in_range(bufnr, first, last)
+
         local ok, notify_err = pcall(vim.rpcnotify, chan, "pi_ask", {
             question = question,
             path = path,
@@ -169,6 +232,12 @@ function M.ask(opts)
             end_line = last,
             lines = lines,
             filetype = vim.bo[bufnr].filetype,
+            -- Diff context, only when there is any: its absence is how pi tells
+            -- "explain this code" from "why did this change". git_head costs two
+            -- subprocesses, so it is skipped unless a hunk made it relevant.
+            context = view_context(bufnr),
+            hunks = hunks,
+            git = hunks and git_head(path) or nil,
         })
 
         if not ok then
@@ -187,7 +256,14 @@ function M.ask(opts)
 
         local where = (path or "buffer") .. ":" .. first .. (last > first and ("-" .. last) or "")
         vim.notify(
-            "Sent to pi → " .. where .. " (" .. #lines .. " line" .. (#lines == 1 and "" or "s") .. ")",
+            "Sent to pi → "
+                .. where
+                .. " ("
+                .. #lines
+                .. " line"
+                .. (#lines == 1 and "" or "s")
+                .. (hunks and (", " .. #hunks .. " hunk" .. (#hunks == 1 and "" or "s")) or "")
+                .. ")",
             vim.log.levels.INFO,
             { title = "pi" }
         )
@@ -199,6 +275,163 @@ function M.ask(opts)
         local span = first == last and ("line " .. first) or ("lines " .. first .. "-" .. last)
         vim.ui.input({ prompt = "Ask pi about " .. span .. ": " }, deliver)
     end
+end
+
+--- Sends the quickfix (or location) list to pi as a set of places to look at.
+---
+--- The natural partner to `:Gitsigns setqflist all`, which fills quickfix with
+--- every changed hunk in the repo: fill the list with whatever you care about,
+--- then hand the whole list over with one question attached. Also works for
+--- diagnostics, grep hits, or an LSP reference list.
+---
+--- @param opts table loclist (boolean), optional question
+function M.send_list(opts)
+    opts = opts or {}
+    local chan, err = pi_channel()
+    if not chan then
+        vim.notify(err, vim.log.levels.WARN, { title = "pi" })
+        return
+    end
+
+    local raw, meta
+    if opts.loclist then
+        raw = vim.fn.getloclist(0)
+        meta = vim.fn.getloclist(0, { title = 1 })
+    else
+        raw = vim.fn.getqflist()
+        meta = vim.fn.getqflist({ title = 1 })
+    end
+
+    if #raw == 0 then
+        vim.notify(
+            (opts.loclist and "Location" or "Quickfix") .. " list is empty — nothing to send.",
+            vim.log.levels.WARN,
+            { title = "pi" }
+        )
+        return
+    end
+
+    -- Quickfix entries carry a bufnr, not a path, and bufname('') is "" for the
+    -- synthetic entries some producers emit; keep those but leave the path blank
+    -- rather than dropping the line, since the text is often the useful part.
+    local items = {}
+    for _, e in ipairs(raw) do
+        items[#items + 1] = {
+            path = (e.bufnr and e.bufnr > 0) and vim.api.nvim_buf_get_name(e.bufnr) or (e.filename or ""),
+            lnum = e.lnum or 0,
+            col = e.col or 0,
+            text = vim.trim(e.text or ""),
+            type = e.type or "",
+        }
+    end
+
+    local function deliver(question)
+        if type(question) ~= "string" or vim.trim(question) == "" then
+            vim.notify("pi: cancelled", vim.log.levels.INFO, { title = "pi" })
+            return
+        end
+        local ok, notify_err = pcall(vim.rpcnotify, chan, "pi_list", {
+            question = question,
+            kind = opts.loclist and "loclist" or "quickfix",
+            title = meta and meta.title or "",
+            items = items,
+        })
+        if not ok then
+            vim.g.pi_chan = nil
+            vim.notify(
+                "pi: channel " .. chan .. " is gone (" .. tostring(notify_err) .. ").\n"
+                    .. "Re-run /nvim-mode on in the pi pane.",
+                vim.log.levels.ERROR,
+                { title = "pi" }
+            )
+            return
+        end
+        vim.notify("Sent " .. #items .. " list item(s) to pi", vim.log.levels.INFO, { title = "pi" })
+    end
+
+    if type(opts.question) == "string" and vim.trim(opts.question) ~= "" then
+        deliver(opts.question)
+    else
+        vim.ui.input({ prompt = "Ask pi about these " .. #items .. " place(s): " }, deliver)
+    end
+end
+
+-- ===========================================================================
+-- PER-TURN DIFF REFERENCE (mini.diff)
+--
+-- Canonical home for the "diff against this exact state" sequence, so the
+-- <leader>ar keymap and pi's own per-turn marking share one implementation
+-- instead of two copies of a fiddly three-step dance.
+--
+-- Ordering is load-bearing and every violation fails silently:
+--   1. source must be gen_source.none() BEFORE enabling. enable() attaches the
+--      configured source, defaulting to gen_source.git, which fails outside a
+--      repo (so the buffer never enables) and inside one would immediately
+--      overwrite the snapshot.
+--   2. buffer-local config is only read at enable time, so an already-tracked
+--      buffer must be disabled and re-enabled.
+--   3. set_ref_text() refuses a buffer that is not enabled, so it goes last.
+-- ===========================================================================
+
+--- Pin the diff reference to a buffer's current contents.
+--- @return boolean ok, string|number detail  line count on success, message on failure
+function M.ack_state(buf)
+    local ok_md, md = pcall(require, "mini.diff")
+    if not ok_md then
+        return false, "mini.diff is not available"
+    end
+
+    buf = (buf == nil or buf == 0) and vim.api.nvim_get_current_buf() or buf
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+    vim.b[buf].minidiff_config = { source = md.gen_source.none() }
+    if md.get_buf_data(buf) ~= nil then
+        pcall(md.disable, buf)
+    end
+
+    local ok_enable, enable_err = pcall(md.enable, buf)
+    if not ok_enable then
+        return false, "enable: " .. tostring(enable_err)
+    end
+
+    local ok_ref, ref_err = pcall(md.set_ref_text, buf, lines)
+    if not ok_ref then
+        return false, "set_ref_text: " .. tostring(ref_err)
+    end
+
+    return true, #lines
+end
+
+--- Hand a buffer back to the git source (undoes ack_state).
+function M.track_git(buf)
+    local ok_md, md = pcall(require, "mini.diff")
+    if not ok_md then
+        return false, "mini.diff is not available"
+    end
+
+    buf = (buf == nil or buf == 0) and vim.api.nvim_get_current_buf() or buf
+    vim.b[buf].minidiff_config = nil
+    if md.get_buf_data(buf) ~= nil then
+        pcall(md.disable, buf)
+    end
+
+    local ok, err = pcall(md.enable, buf)
+    return ok, ok and "tracking git" or tostring(err)
+end
+
+--- Called by pi before it edits a file: pins the reference to the pre-edit state
+--- so the overlay afterwards shows exactly what this turn changed. Takes a path
+--- rather than a buffer because pi thinks in paths, and silently does nothing if
+--- the file isn't open — there is no visible diff to annotate in that case.
+function M.mark_turn_reference(path)
+    if type(path) ~= "string" or path == "" then
+        return false, "no path"
+    end
+    local buf = vim.fn.bufnr(path)
+    if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then
+        return false, "not open"
+    end
+    return M.ack_state(buf)
 end
 
 function M.visual_selection()
@@ -390,6 +623,22 @@ function M.setup()
     vim.keymap.set("x", "<leader>a", ":PiAsk<CR>", {
         silent = true,
         desc = "Ask pi about the selection",
+    })
+
+    -- Send the quickfix list (or, with !, the window's location list) to pi.
+    vim.api.nvim_create_user_command("PiSendList", function(a)
+        M.send_list({ loclist = a.bang, question = a.args })
+    end, {
+        bang = true,
+        nargs = "*",
+        desc = "Send the quickfix list (PiSendList! = loclist) to pi with a question",
+    })
+
+    -- The pairing this is designed for: every changed hunk in the repo, then
+    -- hand the whole list to pi. <leader>gq fills it, <leader>gQ ships it.
+    vim.keymap.set("n", "<leader>gQ", "<cmd>PiSendList<CR>", {
+        silent = true,
+        desc = "Send quickfix list to pi",
     })
 
     vim.api.nvim_create_user_command("PiNvimServer", function()
