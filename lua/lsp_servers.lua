@@ -2,6 +2,20 @@
 
 local M = {}
 
+-- Upward search for a `.venv` starting at pyright's root_dir (typically a
+-- monorepo *member* package, e.g. apps/worker-general) so a workspace-root
+-- venv one level above (created by `uv sync` at the repo root) is still found.
+-- Discovering it this way -- rather than being told about it -- means it
+-- keeps working after a `pi --model ...` restart, and for any worktree made
+-- by hand, with no per-session remediation.
+local function venv_python(start)
+    local hits = vim.fs.find('.venv', { path = start, upward = true, type = 'directory', limit = 1 })
+    local hit = hits[1]
+    if not hit then return nil end
+    local python = hit .. '/bin/python'
+    return vim.uv.fs_stat(python) and python or nil
+end
+
 function M.setup()
     vim.lsp.config('vtsls', {
         cmd = { 'vtsls', '--stdio' },
@@ -49,6 +63,14 @@ function M.setup()
         cmd = { 'pyright-langserver', '--stdio' },
         filetypes = { 'python' },
         root_markers = { 'pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', '.git' },
+        before_init = function(_, config)
+            local py = venv_python(config.root_dir or vim.fn.getcwd())
+            if py then
+                config.settings = vim.tbl_deep_extend('force', config.settings or {}, {
+                    python = { pythonPath = py },
+                })
+            end
+        end,
         settings = {
             python = {
                 analysis = {

@@ -149,6 +149,11 @@ require('pi_nvim').setup()
 -- Quality-of-life settings
 -- ═══════════════════════════════════════════════════════════════════════════════
 
+-- Folding: never start with everything closed. vim-markdown and vimwiki both
+-- use expr-based folding, and Neovim's default foldlevel (0) closes every
+-- fold on load. foldlevelstart=99 forces folds open regardless of source.
+vim.opt.foldlevelstart = 99
+
 -- Smarter search: case-insensitive unless you type a capital
 vim.opt.ignorecase = true
 vim.opt.smartcase = true

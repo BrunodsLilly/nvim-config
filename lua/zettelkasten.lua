@@ -9,6 +9,7 @@ function M.setup()
         {
             path = "~/SecondBrain/",
             syntax = "markdown",
+            diary_rel_path = "daily/",
             ext = ".md",
             path_html = "~/SecondBrain/html/",
             template_path = "~/SecondBrain/templates/",
